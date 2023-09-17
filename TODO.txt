@@ -1,0 +1,8 @@
+1) Datos de tendencias y productos, MercadoLibre y Walmart
+    * Programa para obtener datos de tendencias de productos por categorias
+    * Un script para cada uno
+    * Uso de API
+
+2) Datos de productos Ripley
+
+3) Scraper de productos falabella y paris
