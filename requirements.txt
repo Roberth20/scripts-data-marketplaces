@@ -1,0 +1,11 @@
+beautifulsoup4==4.12.2
+dash==2.13.0
+dash_bootstrap_components==1.5.0
+Flask==2.3.3
+Flask_APScheduler==1.12.4
+pandas==2.0.3
+plotly==5.17.0
+Requests==2.31.0
+tqdm==4.66.1
+openpyxl==3.0.10
+lxml==4.9.3
