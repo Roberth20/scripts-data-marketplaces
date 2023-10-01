@@ -81,6 +81,6 @@ def refresh_token():
 if __name__ == '__main__':
     scheduler.init_app(server)
     scheduler.start()
-    dash_app.run(debug=config.DEBUG)
+    sever.run(debug=config.DEBUG)
 
     
