@@ -1,12 +1,12 @@
-from dash import Dash, html, dcc, Input, Output, callback
-import pandas as pd
 from dash.exceptions import PreventUpdate
 import requests
-import dash_bootstrap_components as dbc
-from funcs import callbacks
+from dash import Dash
 from flask import redirect, request
 import json
 from flask_apscheduler import APScheduler
+import dash_bootstrap_components as dbc
+from dash import html, dcc
+import dash
 
 try:
     from instance import dev
@@ -15,31 +15,18 @@ except:
     from instance import test
     config = dev
 
-dash_app = Dash(__name__, external_stylesheets=[dbc.themes.CYBORG])
+dash_app = Dash(__name__, external_stylesheets=[dbc.themes.CYBORG], use_pages=True)
 server = dash_app.server
 scheduler = APScheduler()
 
 dash_app.layout = html.Div([
-    html.H1(children='Aplicacion de exploracion', className='header-title'),
-    html.Br(),
-    dcc.Dropdown(callbacks.cats.Name, id='cat-selection', placeholder="Escriba para buscar una categoria"),
-    html.Br(),
-    dcc.Dropdown(id="trends", placeholder='Seleccione tendencia para explorar'),
-    dcc.Store(id="trends-data"),
-    dcc.Store(id='category'),
-    html.Br(),
+    html.H1("Aplicacion de exploracion de productos"),
     html.Div([
-        html.Div(html.P('Para descargar el excel con los datos completos de la muestra: '), 
-                 style={'display':'inline-block', 'margin-left':'10px', 'width':'35%', 
-                       'margin-top':'10px'}),
-        html.Div(dbc.Button("Descargar", id="save-data", n_clicks=0), 
-                 style={'display':'inline-block'}),
-        dcc.Download(id='download-data')
-    ], style={'display':'flex'}),
-    dcc.Loading(id='charging-products',
-                children=html.Div(dcc.Graph(id = "table"),
-                                  id='container',
-                                 style={'display':'none'})),
+        html.Div(
+            dcc.Link(f"{page['name']} - {page['path']}", href=page["relative_path"])
+        ) for page in dash.page_registry.values()
+    ]),
+    dash.page_container    
 ])
 
 @server.get('/authorize')
