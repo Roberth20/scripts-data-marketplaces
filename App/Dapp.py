@@ -7,6 +7,11 @@ from flask_apscheduler import APScheduler
 import dash_bootstrap_components as dbc
 from dash import html, dcc
 import dash
+from SQL.connection import conn
+from SQL.models import Auth
+from datetime import datetime
+import pandas as pd
+from sqlalchemy import insert
 
 # Try to import the configuration to be used
 try:
@@ -27,8 +32,8 @@ dash_app.layout = html.Div([
     html.Div([
         html.Div(
             dcc.Link(f"{page['name']} - {page['path']}", href=page["relative_path"])
-        ) for page in dash.page_registry.values()
-    ]),
+        ) for page in dash.page_registry.values()]),
+    html.Div(html.A("refresh", href="/refresh")),
     dash.page_container    
 ])
 
@@ -67,15 +72,22 @@ def auth():
     if not response:
         server.logger.error("The was an error retrieving the token.")
         return "<h1>Hubo un error</h1>"
-    with open("files/auth.json", 'w') as f:
-        json.dump(response.json())
+    data = response.json()
+    with conn.connect() as connection:
+        stmt = (
+            insert(Auth).
+            values(access_token=data['access_token'], expires_in = datetime.now() + pd.Timedelta("6H"),
+                  refresh_token=data['refresh_token'])
+        )
+        connection.execute(stmt)
+        connection.commit()    
     return "<h1>Token saved</h1>"
 
 @scheduler.task('interval', id='refresh_token', hours=4)
 def refresh_token():
     server.logger.info("Updating programed token")
-    with open('files/auth.json') as f:
-        auth_data = json.load(f)
+    with conn.connect() as con:
+        auth = pd.read_sql("SELECT * FROM Autenticacion", con).iloc[-1, :]
 
     headers = {
         'accept': 'application/json',
@@ -85,20 +97,27 @@ def refresh_token():
         'grant_type':'refresh_token',
         'client_id': config.APP_ID,
         'client_secret': config.CLIENT_SECRET,
-        'refresh_token':auth_data['refresh_token']
+        'refresh_token':auth['refresh_token']
     })
     response = requests.post('https://api.mercadolibre.com/oauth/token', headers=headers, data=data)
     if not response:
         server.logger.error("The was an error retrieving the token.")
         return "<h1>Hubo un error</h1>"
-    with open("files/auth.json", 'w') as f:
-        json.dump(response.json(), f)
+    data = response.json()
+    with conn.connect() as connection:
+        stmt = (
+            insert(Auth).
+            values(access_token=data['access_token'], expires_in = datetime.now() + pd.Timedelta("6H"),
+                  refresh_token=data['refresh_token'])
+        )
+        connection.execute(stmt)
+        connection.commit()   
 
 @server.get("/refresh")
 def refresh_token2():
     server.logger.info("Refreshing token")
-    with open('files/auth.json') as f:
-        auth_data = json.load(f)
+    with conn.connect() as con:
+        auth = pd.read_sql("SELECT * FROM Autenticacion", con).iloc[-1, :]
 
     headers = {
         'accept': 'application/json',
@@ -108,14 +127,21 @@ def refresh_token2():
         'grant_type':'refresh_token',
         'client_id': config.APP_ID,
         'client_secret': config.CLIENT_SECRET,
-        'refresh_token':auth_data['refresh_token']
+        'refresh_token':auth['refresh_token']
     })
     response = requests.post('https://api.mercadolibre.com/oauth/token', headers=headers, data=data)
     if not response:
         server.logger.error("The was an error retrieving the token.")
         return "<h1>Hubo un error</h1>"
-    with open("files/auth.json", 'w') as f:
-        json.dump(response.json(), f)
+    data = response.json()
+    with conn.connect() as connection:
+        stmt = (
+            insert(Auth).
+            values(access_token=data['access_token'], expires_in = datetime.now() + pd.Timedelta("6H"),
+                  refresh_token=data['refresh_token'])
+        )
+        connection.execute(stmt)
+        connection.commit()   
     return "<h1>Token saved</h1>"
 
 if __name__ == '__main__':

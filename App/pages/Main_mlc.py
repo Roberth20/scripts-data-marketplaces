@@ -9,20 +9,25 @@ from dash import Input, Output, callback, dcc
 from dash import html
 import dash_bootstrap_components as dbc
 import os
+from SQL.connection import conn
+from sqlalchemy.orm import Session
+from SQL.models import TrendingItems
+from datetime import date
 
 # Setting up the pages
 dash.register_page(__name__, path="/mlc_products", name="Datos de productos", prevent_initial_callbacks=True)
-cats = pd.read_json("files/cats_mlc.json")
+with conn.connect() as con:
+    cats = pd.read_sql("SELECT * FROM Categorias", con)
 
 layout = html.Div([
     html.H2(children='Recoleccion de datos de productos'),
     html.Br(),
-    dcc.Dropdown(cats.Name, id='cat-selection', placeholder="Escriba para buscar una categoria"),
+    html.Div([html.Div(dcc.Dropdown(cats['name'], id='cat-selection', placeholder="Escriba para buscar una categoria"),
+                      style={"display":"inline-block", "width":"49%"}),
+             html.Div(dcc.DatePickerRange(id="dates-range", start_date_placeholder_text="Start Period",
+                                end_date_placeholder_text="End Period", calendar_orientation='vertical'),
+                     style={"display":"inline-block", "verticalAlign":"top", "margin-left":"1em"})]),
     html.Br(),
-    # Comenting option to filter by trends too. This help to improve the speed of data collection
-    #dcc.Dropdown(id="trends", placeholder='Seleccione tendencia para explorar'),
-    #dcc.Store(id="trends-data"),
-    #dcc.Store(id='category'),
     html.Br(),
     html.Div([
         html.Div(html.P('Para descargar el excel con los datos completos de la muestra: '), 
@@ -38,45 +43,23 @@ layout = html.Div([
                                  style={'display':'none'})),
 ])
 
-# Callback to filter by trends
-#@callback(Output('trends', 'options'), Output('trends-data', 'data'), 
-#          Output('category', 'data'),
-#          Input('cat-selection', 'value'))
-#def search_cat(value):
-#    if value == None:
-#        raise PreventUpdate
-#    id = cats.loc[cats['Name'] == value, 'ID'].values[0]
-#    with open('files/auth.json') as f:
-#        auth_data = json.load(f)
-#        token = auth_data["access_token"]
-#    headers = {
-#        'Authorization': f'Bearer {token}'
-#    }
-#    url = f'https://api.mercadolibre.com/trends/MLC/{id}'
-#    result = requests.get(url, headers=headers)
-#    try:
-#        result = result.json()
-#    except:
-#        print(result)
-#        raise PreventUpdate
-#    if type(result) != list:
-#        print(result)
-#        raise PreventUpdate
-        
-#    trends = pd.DataFrame(result)
-#    if trends.shape[0] > 20:
-#        trends = trends.iloc[:20, :]
- #   return trends['keyword'], trends.to_json(), json.dumps({'category':value})
-
 @callback(Output('table', 'figure'), Output('container', 'style'), 
-          Input('cat-selection', 'value'))
-def search_products(value):
-    if value == None:
+          Input('cat-selection', 'value'), Input("dates-range", "start_date"),
+         Input("dates-range", "end_date"))
+def search_products(value, start, end):
+    if value == None or start == None or end == None:
         raise PreventUpdate
-    id = cats.loc[cats['Name'] == value, 'ID'].values[0]
-    with open('files/auth.json') as f:
-        auth_data = json.load(f)
-        token = auth_data["access_token"]
+    start_date = pd.to_datetime(start).date()
+    end_date = pd.to_datetime(end).date()
+    if (end_date - start_date).days > 150:
+        print("Date range greater than 150 days.")
+        raise PreventUpdate
+    id = cats.loc[cats['name'] == value, 'id'].values[0]
+    
+    with conn.connect() as con:
+        auth = pd.read_sql("SELECT * FROM Autenticacion", con).iloc[-1, :]
+        token = auth["access_token"]
+        
     headers = {
         'Authorization': f'Bearer {token}'
     }
@@ -123,14 +106,14 @@ def search_products(value):
                     tmp["keyword"] = row['keyword']
                     tmp["Cantidad de ventas"] = test['sold_quantity']
                     tmp['Fecha de publicacion'] = test['start_time']
-                    urlv = f"https://api.mercadolibre.com/visits/items?ids={id}"
-                    tmp['visitas'] = requests.get(urlv, headers=headers).json()[id]
+                    urlv = f"https://api.mercadolibre.com/items/visits?ids={id}&date_from={start_date}&date_to={end_date}"
+                    tmp['visitas'] = requests.get(urlv, headers=headers).json()[0]['total_visits']
                     tmp['Calidad'] = test['health']
                     prueba.append(tmp)
                     count += 1
                 except:
-                    if test["error"] == 'resource not found':
-                        print(tag)
+                    if "error" == test.keys():
+                        print(test['error'], tag)
                         raise PreventUpdate
                     else:
                         print(test)
@@ -157,7 +140,20 @@ def search_products(value):
     fig.update_layout(margin = dict(l=10, r=10, b=10, t=10, pad = 0),
                      plot_bgcolor='rgba(0, 0, 0, 0)',
                      paper_bgcolor='rgba(0,0,0,0)')
-    major_data.to_excel(f"files/{value}.xlsx", index=False)
+    major_data.columns = ["item_id", "name", "seller_id", "price", "keyword", "items_sold", "publication_date", 
+                         "visits", "quality"]
+    major_data['category'] = value
+    major_data['publication_date'] = pd.to_datetime(major_data['publication_date']).dt.date
+    major_data.fillna(0, inplace=True)
+    trends['category'] = value
+    trends['date'] = date.today()
+    trends.drop("url", axis=1, inplace=True)
+    trends.columns = ['keywords', 'category', 'date']
+    with conn.connect() as con:
+        major_data.to_sql("ProductosYTendencias", con, index=False, if_exists='append')
+        trends.to_sql('Tendencias', con, index=False, if_exists='append')
+        con.commit()
+
     return fig, {'display':'block'}
 
 @callback(Output('download-data', 'data'), 
@@ -168,7 +164,6 @@ def download_data(n_clicks, cat):
         raise PreventUpdate
     if not cat:
         raise PreventUpdate
-    if not os.path.exists(f"files/{cat}.xlsx"):
-        raise PreventUpdate
-    data = pd.read_excel(f"files/{cat}.xlsx")
+    with conn.connect() as con:
+        data = pd.read_sql(f"SELECT * FROM Tendencias WHERE category = '{cat}'", con)
     return dcc.send_data_frame(data.to_excel, f"{cat}.xlsx")

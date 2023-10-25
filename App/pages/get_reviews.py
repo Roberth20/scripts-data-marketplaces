@@ -10,6 +10,9 @@ from dash import html
 import dash_bootstrap_components as dbc
 import os
 import time
+from SQL.connection import conn
+from SQL.models import Reviews, TrendingItems
+import sqlalchemy as db
 
 # Setting up the page of the app
 dash.register_page(__name__, path="/mlc_reviews", name="Opiniones")
@@ -22,17 +25,19 @@ layout = html.Div([
         dbc.Col(dcc.Dropdown(id='cats-reviews', placeholder="Escriba una categoria"), 
                 width=5),
     ], justify="evenly"),
+    dbc.Row(dbc.Col(html.Br())),
     dbc.Row(dbc.Col(
         dcc.Loading(id='charging-reviews',
-                children=dcc.Graph(id = "table-revs")
-                   ),
-        style={'display':'none'},
-        id = "container-rev")
+                children=html.Div([html.Br(), dcc.Graph(id = "table-revs")],
+                                  style={'display':'none'},
+                                  id = "container-rev")
+                   )
+        )
     ),
     dbc.Row([
         dbc.Col(html.Div([
             html.Br(),
-            html.P("Una vez cargada la previsualizacion de la tabla de datos, puede desacargar: "),
+            html.P("Una vez cargada la previsualizacion de la tabla de datos, puede descargar: "),
         ]),
                width='auto', align="end"),
         dbc.Col(dbc.Button("Descargar", id="save-revs", n_clicks=0), width=3),
@@ -44,9 +49,9 @@ layout = html.Div([
          Input('refresh-dropdowns', 'n_intervals'))
 def refresh_dropdown_category(n):
     # Auto-update the options to get reviews
-    files = [(i, i[:-5]) for i in os.listdir("files") if i[-4:]=="xlsx"]
-    cats = [f[1] for f in files]
-    return cats
+    with conn.connect() as con:
+        cats = pd.read_sql(f"SELECT UNIQUE(category) FROM ProductosYTendencias", con)
+    return cats['category'].values
 
 
 @callback(Output("table-revs", "figure"), Output('container-rev', 'style'),
@@ -55,28 +60,19 @@ def search_revs(cat):
     # Check again if the category is on the files
     if not cat:
         raise PreventUpdate
-    file = None
-    files = [(i, i[:-5]) for i in os.listdir("files") if i[-4:]=="xlsx"]
-    for f in files:
-        if f[1] == cat:
-            file = f[0]
-
-    if not file:
-        raise PreventUpdate
 
     # Load data
-    data = pd.read_excel(f"files/{file}")
-    
-    with open('files/auth.json') as f:
-        auth_data = json.load(f)
-        token = auth_data["access_token"]
+    with conn.connect() as con:
+        data = pd.read_sql(f"SELECT * FROM ProductosYTendencias WHERE category='{cat}'", con)
+        auth = pd.read_sql("SELECT * FROM Autenticacion", con).iloc[-1, :]
+        token = auth["access_token"]
         
     headers = {
         'Authorization': f'Bearer {token}'
     }
     # Retrieve reviews from Mercado Libre
     reviews = []
-    for iid in data['ID']:
+    for iid in data['item_id']:
         url = f'https://api.mercadolibre.com/reviews/item/{iid}?limit=50'
         resp = requests.get(url, headers=headers)
         # To prevent Too many requests error, pause the program after each request
@@ -84,14 +80,15 @@ def search_revs(cat):
         try:
             resp = resp.json()
         except:
-            print(resp.text)
+            print("Error obteniendo datos del item: ", resp.text)
             raise PreventUpdate
         try:
             rev = resp['reviews']
         except:
-            print(resp)
+            print("Error obteniendo datos del item: ", resp)
             raise PreventUpdate
         if resp['paging']['total'] > 50:
+            err = False
             for i in range(resp['paging']['total']//50):
                 url = f'https://api.mercadolibre.com/reviews/item/{iid}?limit=50&offset={50*(i+1)}'
                 resp2 = requests.get(url, headers=headers).json()
@@ -99,8 +96,10 @@ def search_revs(cat):
                 try:
                     rev += resp2['reviews']
                 except:
-                    print(resp2)
-                    raise PreventUpdate
+                    if not err:
+                        print("Error obteniendo datos de opiniones: ", resp2)
+                        err = True
+                pass
         if len(rev) == 0:
             continue
         for r in rev:
@@ -130,7 +129,21 @@ def search_revs(cat):
     fig.update_layout(margin = dict(l=10, r=10, b=10, t=10, pad = 0),
                      plot_bgcolor='rgba(0, 0, 0, 0)',
                      paper_bgcolor='rgba(0,0,0,0)')
-    reviews.to_json(f"files/{cat}-reviews.json")
+    with conn.connect() as con:
+        stmt = (db.select(Reviews)
+            .where(Reviews.item_id == TrendingItems.item_id)
+            .where(TrendingItems.category == cat))
+        revs = pd.read_sql(stmt, con)
+        reviews.columns = ['id', 'item_id', 'rate', 'content']
+        reviews.fillna(0, inplace=True)
+        diff = reviews[~reviews['id'].astype('str').isin(revs['id'])].copy()
+        diff.drop_duplicates(inplace=True)
+        if diff.shape[0] > 0:
+            print("Hay datos nuevos")  
+            diff.to_sql("Opiniones", con, if_exists="append", index=False)
+            con.commit()
+        else:
+            print("Nada nuevo")
     return fig, {'display':'block'}
 
 @callback(Output('download-revs', 'data'), 
@@ -141,8 +154,10 @@ def download_data_revs(n_clicks, cat):
         raise PreventUpdate
     if not cat:
         raise PreventUpdate
-    if not os.path.exists(f"files/{cat}-reviews.json"):
-        raise PreventUpdate
-    data = pd.read_json(f"files/{cat}-reviews.json")
-    return dcc.send_data_frame(data.to_excel, f"{cat}-reviews.xlsx")
+    with conn.connect() as con:
+        stmt = (db.select(Reviews)
+                .where(Reviews.item_id == TrendingItems.item_id)
+                .where(TrendingItems.category == cat))
+        revs = pd.read_sql(stmt, con)
+    return dcc.send_data_frame(revs.to_excel, f"{cat}-reviews.xlsx")
 
