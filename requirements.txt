@@ -10,3 +10,4 @@ plotly==5.17.0
 requests==2.31.0
 sqlalchemy==2.0.21
 mariadb==1.1.8
+dash-auth==2.0.0

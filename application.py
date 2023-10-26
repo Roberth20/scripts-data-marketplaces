@@ -12,6 +12,7 @@ from SQL.models import Auth
 from datetime import datetime
 import pandas as pd
 from sqlalchemy import insert
+import dash_auth
 
 # Try to import the configuration to be used
 try:
@@ -23,6 +24,10 @@ except:
 
 # Create the app and scheduler
 app = Dash(__name__, external_stylesheets=[dbc.themes.CYBORG], use_pages=True)
+auth = dash_auth.BasicAuth(
+    app,
+    config.valid_user_password_pairs
+)
 application = app.server
 scheduler = APScheduler()
 
