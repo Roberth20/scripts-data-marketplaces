@@ -22,12 +22,12 @@ except:
     config = test
 
 # Create the app and scheduler
-dash_app = Dash(__name__, external_stylesheets=[dbc.themes.CYBORG], use_pages=True)
-server = dash_app.server
+app = Dash(__name__, external_stylesheets=[dbc.themes.CYBORG], use_pages=True)
+application = app.server
 scheduler = APScheduler()
 
 # Defining basic layout
-dash_app.layout = html.Div([
+app.layout = html.Div([
     html.H1("Aplicacion de exploracion de productos"),
     html.Div([
         html.Div(
@@ -38,21 +38,21 @@ dash_app.layout = html.Div([
 ])
 
 # Adding extras endpoints
-@server.get('/authorize')
+@application.get('/authorize')
 def authorize():
     # For this one, change .com.ar for the one of the country of Mercado Libre where the app was registered.
     # for example, The app registered in Chile will be .com.cl
-    server.logger.info("Authorizing App")
+    application.logger.info("Authorizing App")
     url = f"https://auth.mercadolibre.com.ar/authorization?response_type=code&client_id={config.APP_ID}&redirect_uri={config.REDIRECT_URI}"
     return redirect(url)
 
-@server.get("/authentication")
+@application.get("/authentication")
 def auth():
-    server.logger.info("Authenticating App")
+    application.logger.info("Authenticating App")
     # Process the auth2 response from Mercado Libre
     code = request.args.get("code")
     if not code:
-        server.logger.warning("There isn't authorization code with the request.")
+        application.logger.warning("There isn't authorization code with the request.")
         return "<h1>No authorization code</h1>"
 
     headers = {
@@ -70,7 +70,7 @@ def auth():
 
     response = requests.post("https://api.mercadolibre.com/oauth/token", headers=headers, data=data)
     if not response:
-        server.logger.error("The was an error retrieving the token.")
+        application.logger.error("The was an error retrieving the token.")
         return "<h1>Hubo un error</h1>"
     data = response.json()
     with conn.connect() as connection:
@@ -85,7 +85,7 @@ def auth():
 
 @scheduler.task('interval', id='refresh_token', hours=4)
 def refresh_token():
-    server.logger.info("Updating programed token")
+    application.logger.info("Updating programed token")
     with conn.connect() as con:
         auth = pd.read_sql("SELECT * FROM Autenticacion", con).iloc[-1, :]
 
@@ -101,7 +101,7 @@ def refresh_token():
     })
     response = requests.post('https://api.mercadolibre.com/oauth/token', headers=headers, data=data)
     if not response:
-        server.logger.error("The was an error retrieving the token.")
+        application.logger.error("The was an error retrieving the token.")
         return "<h1>Hubo un error</h1>"
     data = response.json()
     with conn.connect() as connection:
@@ -113,9 +113,9 @@ def refresh_token():
         connection.execute(stmt)
         connection.commit()   
 
-@server.get("/refresh")
+@application.get("/refresh")
 def refresh_token2():
-    server.logger.info("Refreshing token")
+    application.logger.info("Refreshing token")
     with conn.connect() as con:
         auth = pd.read_sql("SELECT * FROM Autenticacion", con).iloc[-1, :]
 
@@ -131,7 +131,7 @@ def refresh_token2():
     })
     response = requests.post('https://api.mercadolibre.com/oauth/token', headers=headers, data=data)
     if not response:
-        server.logger.error("The was an error retrieving the token.")
+        application.logger.error("The was an error retrieving the token.")
         return "<h1>Hubo un error</h1>"
     data = response.json()
     with conn.connect() as connection:
@@ -145,8 +145,8 @@ def refresh_token2():
     return "<h1>Token saved</h1>"
 
 if __name__ == '__main__':
-    scheduler.init_app(server)
+    scheduler.init_app(application)
     scheduler.start()
-    dash_app.run(debug=config.DEBUG)
+    application.run(debug=config.DEBUG, port=config.PORT)
 
     
