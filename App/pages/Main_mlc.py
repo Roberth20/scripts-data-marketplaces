@@ -8,7 +8,6 @@ import plotly.graph_objects as go
 from dash import Input, Output, callback, dcc
 from dash import html
 import dash_bootstrap_components as dbc
-import os
 from SQL.connection import conn
 from sqlalchemy.orm import Session
 from SQL.models import TrendingItems
