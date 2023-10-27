@@ -96,27 +96,36 @@ def search_products(value, start, end):
                 except:
                     print('Hubo un error por: ', response.text)
                     raise PreventUpdate
+                if 'error' in test.keys():
+                    print(test['error'], tag)
+                    raise PreventUpdate
+                tmp = {}
+                tmp['ID'] = test['id']
+                tmp["Nombre"] = test['title']
+                tmp['seller_id'] = test['seller_id']
+                tmp['Precio'] = test['price']
+                tmp["keyword"] = row['keyword']
                 try:
-                    tmp = {}
-                    tmp['ID'] = test['id']
-                    tmp["Nombre"] = test['title']
-                    tmp['seller_id'] = test['seller_id']
-                    tmp['Precio'] = test['price']
-                    tmp["keyword"] = row['keyword']
                     tmp["Cantidad de ventas"] = test['sold_quantity']
-                    tmp['Fecha de publicacion'] = test['start_time']
-                    urlv = f"https://api.mercadolibre.com/items/visits?ids={id}&date_from={start_date}&date_to={end_date}"
-                    tmp['visitas'] = requests.get(urlv, headers=headers).json()[0]['total_visits']
-                    tmp['Calidad'] = test['health']
-                    prueba.append(tmp)
-                    count += 1
                 except:
-                    if "error" == test.keys():
-                        print(test['error'], tag)
-                        raise PreventUpdate
-                    else:
-                        print(test)
-                        raise PreventUpdate
+                    print("Sin registro de ventas: ", test['id'])
+                    tmp['Cantidad de ventas'] = 0
+                try:
+                    tmp['Fecha de publicacion'] = test['start_time']
+                except:
+                    print('Sin fecha de publicacion, cambiando por fecha de creacion')
+                    tmp['Fecha de publicacion'] = test['date_created']
+                urlv = f"https://api.mercadolibre.com/items/visits?ids={id}&date_from={start_date}&date_to={end_date}"
+                try:
+                    r = requests.get(urlv, headers=headers).json()
+                    tmp['visitas'] = r[0]['total_visits']
+                except:
+                    print(r)
+                    tmp['visitas'] = 0
+                tmp['Calidad'] = test['health']
+                prueba.append(tmp)
+                count += 1
+
                 if count == 20:
                     break
         major_data.append(pd.DataFrame(prueba))

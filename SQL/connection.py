@@ -7,4 +7,4 @@ except:
     from instance import test
     config = test
 
-conn = create_engine(f"mariadb+mariadbconnector://{config.user}:{config.password}@{config.endpoint}:{config.port}/{config.db}")
+conn = create_engine(f"mysql+pymysql://{config.user}:{config.password}@{config.endpoint}:{config.port}/{config.db}", pool_recycle=7200)
