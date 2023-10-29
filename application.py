@@ -12,6 +12,7 @@ from SQL.models import Auth
 from datetime import datetime
 import pandas as pd
 from sqlalchemy import insert
+import sqlalchemy as db
 import dash_auth
 
 # Try to import the configuration to be used
@@ -88,11 +89,12 @@ def auth():
         connection.commit()    
     return "<h1>Token saved</h1>"
 
-@scheduler.task('interval', id='refresh_token', hours=4)
+@scheduler.task('interval', id='refresh_token', minutes=15)
 def refresh_token():
     application.logger.info("Updating programed token")
     with conn.connect() as con:
-        auth = pd.read_sql("SELECT * FROM Autenticacion", con).iloc[-1, :]
+        stmt = db.select(Auth)
+        auth = pd.read_sql(stmt, con).iloc[-1, :]
 
     headers = {
         'accept': 'application/json',
