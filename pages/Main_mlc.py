@@ -173,5 +173,5 @@ def download_data(n_clicks, cat):
     if not cat:
         raise PreventUpdate
     with conn.connect() as con:
-        data = pd.read_sql(f"SELECT * FROM Tendencias WHERE category = '{cat}'", con)
+        data = pd.read_sql(f"SELECT * FROM ProductosYTendencias WHERE category = '{cat}'", con)
     return dcc.send_data_frame(data.to_excel, f"{cat}.xlsx")
