@@ -89,7 +89,7 @@ def auth():
         connection.commit()    
     return "<h1>Token saved</h1>"
 
-@scheduler.task('interval', id='refresh_token', minutes=15)
+@scheduler.task('interval', id='refresh_token', hours=4)
 def refresh_token():
     application.logger.info("Updating programed token")
     with conn.connect() as con:
@@ -155,5 +155,6 @@ if __name__ == '__main__':
     scheduler.init_app(application)
     scheduler.start()
     application.run(debug=config.DEBUG, port=config.PORT)
+    #app.run(debug=config.DEBUG, port=config.PORT)
 
     

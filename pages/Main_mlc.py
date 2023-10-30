@@ -27,7 +27,9 @@ layout = html.Div([
                                 end_date_placeholder_text="End Period", calendar_orientation='vertical'),
                      style={"display":"inline-block", "verticalAlign":"top", "margin-left":"1em"})]),
     html.Br(),
-    html.Br(),
+    dcc.Loading(id='charging-products',
+                children=html.Div(id='message-products',
+                                 style={'display':'none'})),
     html.Div([
         html.Div(html.P('Para descargar el excel con los datos completos de la muestra: '), 
                  style={'display':'inline-block', 'margin-left':'10px', 'width':'35%', 
@@ -36,13 +38,14 @@ layout = html.Div([
                  style={'display':'inline-block'}),
         dcc.Download(id='download-data')
     ], style={'display':'flex'}),
-    dcc.Loading(id='charging-products',
-                children=html.Div(dcc.Graph(id = "table"),
-                                  id='container',
-                                 style={'display':'none'})),
+    html.Div(dbc.Button('Cargar muestra', id='show-products', n_clicks=0),
+            style={'display':'flex', 'margin-left':'5em'}),
+    html.Div(dcc.Graph(id = "table"),
+            id='container',
+            style={'display':'none'}),
 ])
 
-@callback(Output('table', 'figure'), Output('container', 'style'), 
+@callback(Output('message-products', 'children'), Output('message-products', 'style'),
           Input('cat-selection', 'value'), Input("dates-range", "start_date"),
          Input("dates-range", "end_date"))
 def search_products(value, start, end):
@@ -51,10 +54,11 @@ def search_products(value, start, end):
     start_date = pd.to_datetime(start).date()
     end_date = pd.to_datetime(end).date()
     if (end_date - start_date).days > 150:
-        print("Date range greater than 150 days.")
-        raise PreventUpdate
+        message = html.P('Hubo un error. El rango de fecha seleccionado no puede ser mayor a 150 dias')
+        return message, {'display':'block'}
+
     id = cats.loc[cats['name'] == value, 'id'].values[0]
-    
+
     with conn.connect() as con:
         auth = pd.read_sql("SELECT * FROM Autenticacion", con).iloc[-1, :]
         token = auth["access_token"]
@@ -67,17 +71,18 @@ def search_products(value, start, end):
     try:
         result = result.json()
     except:
-        print(result)
-        raise PreventUpdate
+        message = html.P(f"Hubo un error: {result}")
+        return message, {'display':'block'}
     if type(result) != list:
-        print(result)
-        raise PreventUpdate
+        message = html.P(f"Hubo un error: {result}")
+        return message, {'display':'block'}
         
     trends = pd.DataFrame(result)
     if trends.shape[0] > 20:
         trends = trends.iloc[:20, :]
         
     major_data = []
+    text = ""
     for i, row in trends.iterrows():
         prueba = []
         count = 0
@@ -94,11 +99,12 @@ def search_products(value, start, end):
                 try:
                     test = response.json()
                 except:
-                    print('Hubo un error por: ', response.text)
-                    raise PreventUpdate
+                    message = html.P(f'Hubo un error por: {response.text}')
+                    return message, {'display':'block'}
                 if 'error' in test.keys():
-                    print(test['error'], tag)
-                    raise PreventUpdate
+                    message = html.P(f'Hubo un error por: {test["error"]}, {tag}')
+                    return message, {'display':'block'}
+                    
                 tmp = {}
                 tmp['ID'] = test['id']
                 tmp["Nombre"] = test['title']
@@ -108,19 +114,19 @@ def search_products(value, start, end):
                 try:
                     tmp["Cantidad de ventas"] = test['sold_quantity']
                 except:
-                    print("Sin registro de ventas: ", test['id'])
+                    text += f"Sin registro de ventas: {test['id']}."
                     tmp['Cantidad de ventas'] = 0
                 try:
                     tmp['Fecha de publicacion'] = test['start_time']
                 except:
-                    print('Sin fecha de publicacion, cambiando por fecha de creacion')
+                    text += f'Sin fecha de publicacion, cambiando por fecha de creacion para producto {test["id"]}'
                     tmp['Fecha de publicacion'] = test['date_created']
                 urlv = f"https://api.mercadolibre.com/items/visits?ids={id}&date_from={start_date}&date_to={end_date}"
                 try:
                     r = requests.get(urlv, headers=headers).json()
                     tmp['visitas'] = r[0]['total_visits']
                 except:
-                    print(r)
+                    text += f"Hubo un error con las visitas: {r}. Igualando a cero."
                     tmp['visitas'] = 0
                 tmp['Calidad'] = test['health']
                 prueba.append(tmp)
@@ -131,6 +137,34 @@ def search_products(value, start, end):
         major_data.append(pd.DataFrame(prueba))
 
     major_data = pd.concat(major_data, ignore_index=True)
+    major_data.columns = ["item_id", "name", "seller_id", "price", "keyword", "items_sold", "publication_date", 
+                         "visits", "quality"]
+    major_data['category'] = value
+    major_data['publication_date'] = pd.to_datetime(major_data['publication_date']).dt.date
+    major_data.fillna(0, inplace=True)
+    trends['category'] = value
+    trends['date'] = date.today()
+    trends.drop("url", axis=1, inplace=True)
+    trends.columns = ['keywords', 'category', 'date']
+
+    with conn.connect() as con:
+        major_data.to_sql("ProductosYTendencias", con, index=False, if_exists='append')
+        trends.to_sql('Tendencias', con, index=False, if_exists='append')
+        con.commit()
+        text += "Cargado exitosamente a la base de datos."
+
+    return html.P(text), {'display':'block'}
+
+@callback(Output('table', 'figure'), Output('container', 'style'), 
+          Input('cat-selection', 'value'), Input('show-products', 'n_clicks'),
+         suppress_callback_exceptions=True)
+def show_products(value, n):
+    if value == None or n == 0:
+        raise PreventUpdate  
+
+    with conn.connect() as con:
+        major_data = pd.read_sql(f"SELECT * FROM ProductosYTendencias WHERE category = '{value}'", con)
+    
     columns = [f"<b>{i}</b>" for i in major_data.columns]
     sample = major_data.iloc[::5, :]
     fig = go.Figure(go.Table(
@@ -148,19 +182,6 @@ def search_products(value, start, end):
     fig.update_layout(margin = dict(l=10, r=10, b=10, t=10, pad = 0),
                      plot_bgcolor='rgba(0, 0, 0, 0)',
                      paper_bgcolor='rgba(0,0,0,0)')
-    major_data.columns = ["item_id", "name", "seller_id", "price", "keyword", "items_sold", "publication_date", 
-                         "visits", "quality"]
-    major_data['category'] = value
-    major_data['publication_date'] = pd.to_datetime(major_data['publication_date']).dt.date
-    major_data.fillna(0, inplace=True)
-    trends['category'] = value
-    trends['date'] = date.today()
-    trends.drop("url", axis=1, inplace=True)
-    trends.columns = ['keywords', 'category', 'date']
-    with conn.connect() as con:
-        major_data.to_sql("ProductosYTendencias", con, index=False, if_exists='append')
-        trends.to_sql('Tendencias', con, index=False, if_exists='append')
-        con.commit()
 
     return fig, {'display':'block'}
 

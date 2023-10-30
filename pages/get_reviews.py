@@ -28,12 +28,14 @@ layout = html.Div([
     dbc.Row(dbc.Col(html.Br())),
     dbc.Row(dbc.Col(
         dcc.Loading(id='charging-reviews',
-                children=html.Div([html.Br(), dcc.Graph(id = "table-revs")],
-                                  style={'display':'none'},
-                                  id = "container-rev")
+                children=html.Div(id="message-reviews", style={'display':'none'})
                    )
         )
     ),
+    dbc.Row(dbc.Col(dbc.Button('Cargar muestra', id='show-revs', n_clicks=0), width=10), justify='center'),
+    dbc.Row(dbc.Col(html.Div([html.Br(), dcc.Graph(id = "table-revs")],
+                                  style={'display':'none'},
+                                  id = "container-rev"))),
     dbc.Row([
         dbc.Col(html.Div([
             html.Br(),
@@ -53,11 +55,9 @@ def refresh_dropdown_category(n):
         cats = pd.read_sql(f"SELECT UNIQUE(category) FROM ProductosYTendencias", con)
     return cats['category'].values
 
-
-@callback(Output("table-revs", "figure"), Output('container-rev', 'style'),
+@callback(Output('message-reviews', 'children'), Output('message-reviews', 'style'),
          Input('cats-reviews', 'value'))
 def search_revs(cat):
-    # Check again if the category is on the files
     if not cat:
         raise PreventUpdate
 
@@ -66,10 +66,11 @@ def search_revs(cat):
         data = pd.read_sql(f"SELECT * FROM ProductosYTendencias WHERE category='{cat}'", con)
         auth = pd.read_sql("SELECT * FROM Autenticacion", con).iloc[-1, :]
         token = auth["access_token"]
-        
+
     headers = {
         'Authorization': f'Bearer {token}'
     }
+    text = ""
     # Retrieve reviews from Mercado Libre
     reviews = []
     for iid in data['item_id']:
@@ -80,13 +81,13 @@ def search_revs(cat):
         try:
             resp = resp.json()
         except:
-            print("Error obteniendo datos del item: ", resp.text)
-            raise PreventUpdate
+            message = html.P(f"Error obteniendo datos del item: {resp.text}")
+            return message, {'display':'block'}
         try:
             rev = resp['reviews']
         except:
-            print("Error obteniendo datos del item: ", resp)
-            raise PreventUpdate
+            message = html.P(f"Error obteniendo datos del item: {resp}")
+            return message, {'display':'block'}
         if resp['paging']['total'] > 50:
             err = False
             for i in range(resp['paging']['total']//50):
@@ -97,7 +98,7 @@ def search_revs(cat):
                     rev += resp2['reviews']
                 except:
                     if not err:
-                        print("Error obteniendo datos de opiniones: ", resp2)
+                        text = f"Error obteniendo datos de opiniones: {resp2}"
                         err = True
                 pass
         if len(rev) == 0:
@@ -110,8 +111,38 @@ def search_revs(cat):
             tmp['content'] = r['content']
             reviews.append(tmp)
 
-    # Preparing a small table to show the reviews
     reviews = pd.DataFrame(reviews)
+    with conn.connect() as con:
+        stmt = (db.select(Reviews)
+            .where(Reviews.item_id == TrendingItems.item_id)
+            .where(TrendingItems.category == cat))
+        revs = pd.read_sql(stmt, con)
+        reviews.columns = ['id', 'item_id', 'rate', 'content']
+        reviews.fillna(0, inplace=True)
+        diff = reviews[~reviews['id'].astype('str').isin(revs['id'])].copy()
+        diff.drop_duplicates(inplace=True)
+        if diff.shape[0] > 0:
+            diff.to_sql("Opiniones", con, if_exists="append", index=False)
+            con.commit()
+            text += "Datos cargados con exito a la base de datos"
+        else:
+            text += "Proceso completado, pero no hay datos nuevos para cargar."
+
+    return html.P(text), {'display':'block'}
+
+
+@callback(Output("table-revs", "figure"), Output('container-rev', 'style'),
+         Input('cats-reviews', 'value'), Input('show-revs', 'n_clicks'))
+def show_revs(cat, n):
+    if not cat or n == 0:
+        raise PreventUpdate        
+
+    with conn.connect() as con:
+        stmt = (db.select(Reviews)
+                .where(Reviews.item_id == TrendingItems.item_id)
+                .where(TrendingItems.category == cat))
+        reviews = pd.read_sql(stmt, con)
+    
     sh_rev = reviews.iloc[:10, :]
     columns = [f"<b>{i}</b>" for i in reviews.columns]
     fig = go.Figure(go.Table(
@@ -129,21 +160,7 @@ def search_revs(cat):
     fig.update_layout(margin = dict(l=10, r=10, b=10, t=10, pad = 0),
                      plot_bgcolor='rgba(0, 0, 0, 0)',
                      paper_bgcolor='rgba(0,0,0,0)')
-    with conn.connect() as con:
-        stmt = (db.select(Reviews)
-            .where(Reviews.item_id == TrendingItems.item_id)
-            .where(TrendingItems.category == cat))
-        revs = pd.read_sql(stmt, con)
-        reviews.columns = ['id', 'item_id', 'rate', 'content']
-        reviews.fillna(0, inplace=True)
-        diff = reviews[~reviews['id'].astype('str').isin(revs['id'])].copy()
-        diff.drop_duplicates(inplace=True)
-        if diff.shape[0] > 0:
-            print("Hay datos nuevos")  
-            diff.to_sql("Opiniones", con, if_exists="append", index=False)
-            con.commit()
-        else:
-            print("Nada nuevo")
+    
     return fig, {'display':'block'}
 
 @callback(Output('download-revs', 'data'), 
