@@ -38,10 +38,12 @@ def search_query(query):
     headers = {
         'Authorization': f'Bearer {token}'
     }
+    # Create the DataFrame for the new search
+    df = pd.DataFrame(columns=['Nombre', 'Precio', 'Catalogo', 'Visitas', 'URL'])
     # Request the product query with specific parameters for Mercado Libre Chile and with active products
-    status = 'active'
     site_id = 'MLC'
-    url = f'https://api.mercadolibre.com/products/search?status={status}&site_id={site_id}&q={query}&limit=10'
+    # Requesting the products with catalog
+    url = f'https://api.mercadolibre.com/sites/{site_id}/search?q={query}&catalog_listing=true&offset={0}'
     response = requests.get(url, headers=headers).json()
     # Check for error messages
     if 'message' in response.keys():
@@ -49,52 +51,35 @@ def search_query(query):
     # Check if there are matches on the query
     if len(response['results']) == 0:
         return 'No hay coincidencias'
-    # Construct dataframe
-    data = pd.DataFrame(response['results'])
-    # This particular case is when the results are parents, in this case the search query need
-    # to be more specific
-    if 'parent_id' not in data.columns:
-        return "Busqueda poco especifica, no esposible encontrar resultados."
-    # Clean data
-    data.drop(['status', 'domain_id', 'settings', 'main_features', 'attributes', 
-                'pictures', 'parent_id', 'children_ids', 'quality_type'], axis=1, inplace=True)
-    df = []
-    # Get catalog rivals and their info
-    text = "Competencias de catalogo para los productos: "
-    for i, row in data.iterrows():
-        url = f'https://api.mercadolibre.com/products/{row["id"]}/items'
-        response = requests.get(url, headers=headers).json()
-        if 'error' in response.keys():
-            continue
-        df += response['results']
-        text += row['name'] + ', '
-    # Check if there is competition 
-    if len(df) == 0:
-        return f'No hay competencias de catalogo para productos de la busqueda: {query}'
-    # Prepare DataFrame with rivals and clean
-    df = pd.DataFrame(df)
-    l = df.tags.to_list()
-    l.sort()
-    tags = pd.get_dummies(pd.DataFrame(l), prefix='tag')
-    shipping = pd.DataFrame(df.shipping.to_list())
-    l = []
-    for address in df.seller_address.to_list():
-        l.append({'seller_address_city':address['city']['name']})
-    address = pd.DataFrame(l)
-    df = pd.concat([df, tags, shipping, address], axis=1)
-    df.drop(['shipping', 'tags', 'deal_ids', 'site_id', 
-             'currency_id', 'inventory_id', 'sale_terms',
-            'seller_address'], axis=1, inplace=True)
-    df.rename(columns={'item_id':'item'}, inplace=True)
-    names = []
-    for id in df.item:
-        url = f'https://api.mercadolibre.com/items/{id}'
-        names.append(requests.get(url, headers=headers).json()['title'])
-    df['item'] = names
+    # Construct dataframe by searching all product results
+    for i in range(response['paging']['primary_results'] // 50 + 1):
+        url = f'https://api.mercadolibre.com/sites/{site_id}/search?q={query}&catalog_listing=true&offset={i*50}'
+        resp = requests.get(url, headers=headers).json()
+        # When the data reach one hundred columns stop, performance related
+        if df.shape[0] >= 100:
+            break
+        for r in resp['results']:
+            # Some products don't have catalog, ignore them
+            if r['catalog_product_id'] == None:
+                continue
+            # Get all data
+            url = f'https://api.mercadolibre.com/products/{r["catalog_product_id"]}'
+            catalog_name = requests.get(url, headers=headers).json()['name']
+            name = r['title']
+            link = r['permalink']
+            # Preparing the link in markdown format
+            link = f'[{name}]({link})'
+            price = r['price']
+            url = f"https://api.mercadolibre.com/visits/items?ids={r['id']}"
+            visits = requests.get(url, headers=headers).json()[r['id']]
+            # Append to datafram
+            df.loc[len(df), :] = [name, price, catalog_name, visits, link]
     
-    return html.Div([html.P(text), 
-                     dash_table.DataTable(df.to_dict('records'), 
-                                columns = [{"name": i, "id": i} for i in df.columns],
+    # Ordenar por visitas
+    df.sort_values('Visitas',ascending=False, inplace=True)        
+    
+    return html.Div([dash_table.DataTable(df.to_dict('records'), 
+                                columns = [{"name": i, "id": i} if i != 'URL' else {"name": i, "id": i, 'presentation':'markdown'} for i in df.columns],
                                page_size =10, 
                                style_cell = {'overflow':'hidden', 'textOverflow':'ellipsis', 'maxWidth':10},
                                style_header={
@@ -105,6 +90,10 @@ def search_query(query):
                                     'backgroundColor': 'rgb(90, 168, 225)',
                                     'color': 'white'
                                 },
+                                style_data_conditional=[{
+                                    'if': {'column_id': 'URL'},
+                                    'backgroundColor':'rgb(3, 14, 75)'
+                                }],
                                tooltip_data=[
                                     {
                                         column: {'value': str(value), 'type': 'markdown'}
